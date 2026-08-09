@@ -114,28 +114,112 @@ function enterApp() {
   loadDialogs();
 }
 
+let allDialogs = [];        // کل دیالوگ‌ها (خام از سرور)، برای فیلتر/جستجو
+let activeFilter = 'all';
+let searchQuery = '';
+
 // ---------- Dialogs ----------
 async function loadDialogs() {
   const { dialogs } = await api('/api/dialogs');
+  allDialogs = dialogs;
   dialogsCache = dialogs.map(d => ({ id: d.id, name: d.name }));
-  const list = document.getElementById('dialogs-list');
-  list.innerHTML = '';
-  for (const d of dialogs) {
+  renderDialogs();
+}
+
+function renderDialogs() {
+  let list = allDialogs;
+
+  if (activeFilter === 'unread') list = list.filter(d => d.unread_count > 0);
+  else if (activeFilter === 'groups') list = list.filter(d => d.is_group);
+  else if (activeFilter === 'channels') list = list.filter(d => d.is_channel);
+
+  if (searchQuery) {
+    const q = searchQuery.toLowerCase();
+    list = list.filter(d => (d.name || '').toLowerCase().includes(q));
+  }
+
+  const totalUnread = allDialogs.filter(d => d.unread_count > 0).length;
+  const unreadBadge = document.getElementById('unread-total-badge');
+  if (totalUnread > 0) { unreadBadge.textContent = totalUnread; unreadBadge.classList.remove('hidden'); }
+  else { unreadBadge.classList.add('hidden'); }
+
+  const container = document.getElementById('dialogs-list');
+  container.innerHTML = '';
+
+  if (!list.length) {
+    container.innerHTML = `<div class="dialogs-empty">چیزی پیدا نشد</div>`;
+    return;
+  }
+
+  for (const d of list) {
     const item = document.createElement('div');
     item.className = 'dialog-item';
     item.dataset.id = d.id;
     item.innerHTML = `
-      <img class="avatar" src="${d.avatar}" onerror="this.style.background='linear-gradient(160deg,#2AABEE,#229ED9)'; this.src='';">
+      ${avatarHtml(d.name, d.avatar)}
       <div class="dialog-info">
-        <div class="dialog-name">${escapeHtml(d.name)}</div>
-        <div class="dialog-last">${escapeHtml(d.last_message || '')}</div>
+        <div class="dialog-info-top">
+          <div class="dialog-name">${escapeHtml(d.name)}</div>
+          <div class="dialog-time">${d.last_date ? new Date(d.last_date).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' }) : ''}</div>
+        </div>
+        <div class="dialog-info-bottom">
+          <div class="dialog-last">${escapeHtml(d.last_message || '')}</div>
+          ${d.unread_count ? `<div class="unread-badge">${d.unread_count}</div>` : ''}
+        </div>
       </div>
-      ${d.unread_count ? `<div class="unread-badge">${d.unread_count}</div>` : ''}
     `;
     item.onclick = () => openChat(d.id, d.name, d.avatar);
-    list.appendChild(item);
+    container.appendChild(item);
   }
 }
+
+// ---------- Filter tabs ----------
+document.querySelectorAll('.filter-tab').forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll('.filter-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeFilter = btn.dataset.filter;
+    renderDialogs();
+  };
+});
+
+// ---------- Search ----------
+const searchToggleBtn = document.getElementById('search-toggle-btn');
+const searchInputWrap = document.getElementById('search-input-wrap');
+const searchInput = document.getElementById('search-input');
+
+searchToggleBtn.onclick = () => {
+  searchInputWrap.classList.toggle('hidden');
+  if (!searchInputWrap.classList.contains('hidden')) searchInput.focus();
+  else { searchInput.value = ''; searchQuery = ''; renderDialogs(); }
+};
+searchInput.addEventListener('input', () => {
+  searchQuery = searchInput.value.trim();
+  renderDialogs();
+});
+
+// ---------- Kebab menu ----------
+const kebabBtn = document.getElementById('kebab-menu-btn');
+const kebabMenu = document.getElementById('kebab-menu');
+kebabBtn.onclick = (e) => {
+  e.stopPropagation();
+  kebabMenu.classList.toggle('hidden');
+};
+document.addEventListener('click', (e) => {
+  if (!kebabMenu.contains(e.target) && e.target !== kebabBtn) kebabMenu.classList.add('hidden');
+});
+
+// ---------- Bottom nav ----------
+document.querySelectorAll('.bottom-nav-item').forEach(btn => {
+  btn.onclick = () => {
+    if (btn.dataset.tab !== 'chats') {
+      alert('این بخش هنوز پیاده‌سازی نشده — فعلاً فقط «چت‌ها» فعاله.');
+      return;
+    }
+    document.querySelectorAll('.bottom-nav-item').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  };
+});
 
 // ---------- Chat ----------
 async function openChat(chatId, name, avatar) {
@@ -146,12 +230,20 @@ async function openChat(chatId, name, avatar) {
   document.getElementById('chat-empty').classList.add('hidden');
   document.getElementById('chat-view').classList.remove('hidden');
   document.getElementById('chat-header-name').textContent = name;
-  document.getElementById('chat-header-avatar').src = avatar;
+  const headerAvatarWrap = document.getElementById('chat-header-avatar-wrap');
+  headerAvatarWrap.style.setProperty('--avatar-color', avatarColor(name));
+  headerAvatarWrap.innerHTML = `<span class="avatar-fallback">${escapeHtml(initials(name))}</span><img class="avatar-img" src="${avatar}" onerror="this.remove()">`;
+  appScreen.classList.add('chat-open'); // تو موبایل: چت رو تمام‌صفحه نشون بده، لیست رو مخفی کن
 
   await loadMessages();
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(loadMessages, 3000);
 }
+
+document.getElementById('chat-back-btn').onclick = () => {
+  appScreen.classList.remove('chat-open');
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+};
 
 async function loadMessages() {
   if (!currentChatId) return;
@@ -363,6 +455,33 @@ async function sendMessage() {
   }
 }
 
+// ---------- Avatar (رنگی با حرف اول، مثل تلگرام واقعی) ----------
+const AVATAR_COLORS = ['#FF885E', '#FFA85C', '#FFCD6A', '#7CE092', '#4BC8CE', '#5FA8FF', '#8B7FFF', '#E96FA8'];
+
+function avatarColor(name) {
+  let hash = 0;
+  for (let i = 0; i < (name || '').length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+  return AVATAR_COLORS[hash % AVATAR_COLORS.length];
+}
+
+function initials(name) {
+  const parts = (name || '؟').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '؟';
+  const first = parts[0][0] || '';
+  const second = parts.length > 1 ? (parts[1][0] || '') : '';
+  return (first + second).toUpperCase();
+}
+
+function avatarHtml(name, src, size) {
+  const cls = size === 'lg' ? 'avatar-wrap avatar-wrap-lg' : 'avatar-wrap';
+  return `
+    <div class="${cls}" style="--avatar-color:${avatarColor(name)}">
+      <span class="avatar-fallback">${escapeHtml(initials(name))}</span>
+      <img class="avatar-img" src="${src}" loading="lazy" onerror="this.remove()">
+    </div>
+  `;
+}
+
 function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str || '';
@@ -378,3 +497,4 @@ function escapeHtml(str) {
     // بمون تو صفحه‌ی لاگین
   }
 })();
+  
