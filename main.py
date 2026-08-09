@@ -15,13 +15,18 @@ app = FastAPI()
 # یوزرنیم/پسورد رو توی Railway به‌عنوان متغیر محیطی تنظیم کن، نه توی کد:
 #   IG_USERNAME=...
 #   IG_PASSWORD=...
-IG_USERNAME = os.environ.get("IG_USERNAME")
-IG_PASSWORD = os.environ.get("IG_PASSWORD")
+# .strip() چون کپی/پیست توی Railway گاهی فاصله یا خط جدید مخفی اضافه می‌کنه
+# که باعث می‌شه اینستاگرام یوزرنیم رو "پیدا نشد" اعلام کنه.
+_raw_username = os.environ.get("IG_USERNAME")
+_raw_password = os.environ.get("IG_PASSWORD")
+IG_USERNAME = _raw_username.strip() if _raw_username else None
+IG_PASSWORD = _raw_password.strip() if _raw_password else None
 
 # پراکسی اختیاری (HTTP/SOCKS5) برای لاگین از IP غیر-دیتاسنتری.
 # چون IP سرورهای ابری مثل Railway اغلب توسط اینستاگرام بلاک‌لیست می‌شه.
 # فرمت: PROXY_URL=http://user:pass@host:port  یا  socks5://user:pass@host:port
-PROXY_URL = os.environ.get("PROXY_URL")
+_raw_proxy = os.environ.get("PROXY_URL")
+PROXY_URL = _raw_proxy.strip() if _raw_proxy else None
 
 shared_client: Client | None = None
 login_lock = threading.Lock()
@@ -155,7 +160,14 @@ def serialize_media_obj(m) -> dict:
 @app.get("/api/status")
 def status():
     username = shared_client.username if shared_client else None
-    return {"logged_in": shared_client is not None, "username": username, "error": login_error}
+    return {
+        "logged_in": shared_client is not None,
+        "username": username,
+        "error": login_error,
+        # برای عیب‌یابی: طول و نمایش دقیق کاراکترهای IG_USERNAME (بدون افشای پسورد)
+        "debug_ig_username_repr": repr(IG_USERNAME),
+        "debug_ig_username_len": len(IG_USERNAME) if IG_USERNAME else 0,
+    }
 
 
 # ---------- فید خانه ----------
@@ -306,4 +318,3 @@ def video_proxy(url: str, request: Request):
 
 # ---------- فایل‌های فرانت‌اند ----------
 app.mount("/", StaticFiles(directory="public", html=True), name="static")
-    
