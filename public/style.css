@@ -45,6 +45,19 @@
 
 .login-box button:disabled { opacity: 0.5; }
 
+.signup-line {
+  text-align: center;
+  font-size: 13px;
+  color: #262626;
+  margin-top: 8px;
+}
+
+.signup-line a {
+  color: #0095f6;
+  font-weight: 600;
+  text-decoration: none;
+}
+
 /* ---------- explore grid ---------- */
 .explore-grid {
   display: grid;
