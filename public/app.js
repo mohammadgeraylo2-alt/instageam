@@ -10,13 +10,7 @@ if (window.Telegram && window.Telegram.WebApp) {
 }
 
 // ---------- عناصر ----------
-const loginScreen = document.getElementById('login-screen');
 const appScreen = document.getElementById('app-screen');
-const loginUsername = document.getElementById('login-username');
-const loginPassword = document.getElementById('login-password');
-const login2fa = document.getElementById('login-2fa');
-const loginBtn = document.getElementById('login-btn');
-const loginError = document.getElementById('login-error');
 
 const searchBar = document.getElementById('search-bar');
 const searchInput = document.getElementById('search-input');
@@ -34,8 +28,7 @@ const reelsContainer = document.getElementById('reels-container');
 const mainEl = document.querySelector('main');
 const navProfilePic = document.getElementById('nav-profile-pic');
 
-let sessionId = localStorage.getItem('ig_session_id');
-let myUsername = localStorage.getItem('ig_username');
+let myUsername = null;
 
 const ICONS = {
   heart: '<svg viewBox="0 0 24 24" class="action-icon icon-heart"><path d="M12 21s-7.5-4.6-10-9.1C.4 8.6 2 5 5.6 5c2 0 3.4 1 4.4 2.5C11 6 12.4 5 14.4 5 18 5 19.6 8.6 22 11.9 19.5 16.4 12 21 12 21z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>',
@@ -55,82 +48,31 @@ function formatNum(n) {
   return n;
 }
 
-// ---------- ورود ----------
-async function doLogin() {
-  const username = loginUsername.value.trim();
-  const password = loginPassword.value;
-  const code = login2fa.value.trim();
-
-  if (!username || !password) {
-    loginError.textContent = 'یوزرنیم و پسورد رو وارد کن';
-    return;
-  }
-
-  loginBtn.disabled = true;
-  loginBtn.textContent = 'در حال ورود...';
-  loginError.textContent = '';
-
-  try {
-    const res = await fetch('/api/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password, verification_code: code || null }),
-    });
-    const data = await res.json();
-
-    if (!res.ok) {
-      const detail = data.detail || {};
-      if (detail.code === '2fa_required') {
-        login2fa.style.display = 'block';
-        loginError.textContent = detail.message;
-      } else {
-        loginError.textContent = detail.message || 'خطا در ورود';
-      }
-      return;
-    }
-
-    sessionId = data.session_id;
-    myUsername = data.username;
-    localStorage.setItem('ig_session_id', sessionId);
-    localStorage.setItem('ig_username', myUsername);
-    showApp();
-  } catch (err) {
-    loginError.textContent = 'خطا در ارتباط با سرور';
-  } finally {
-    loginBtn.disabled = false;
-    loginBtn.textContent = 'ورود';
-  }
-}
-
-loginBtn.onclick = doLogin;
-loginPassword.addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
-
-const signupLink = document.getElementById('signup-link');
-signupLink.onclick = (e) => {
-  if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.openLink) {
-    e.preventDefault();
-    window.Telegram.WebApp.openLink(signupLink.href);
-  }
-};
-
-// ---------- نمایش اپ اصلی ----------
-function showApp() {
-  loginScreen.style.display = 'none';
+// ---------- نمایش اپ اصلی (بدون نیاز به لاگین کاربر) ----------
+async function showApp() {
   appScreen.style.display = 'block';
+  try {
+    const res = await fetch('/api/status');
+    const data = await res.json();
+    if (data.logged_in) {
+      myUsername = data.username;
+    } else {
+      errorBox.textContent = data.error || 'اکانت سرور لاگین نیست';
+    }
+  } catch (e) {}
   loadHome();
 }
 
 function handleAuthError(data) {
-  if (data && data.detail && data.detail.code === 'no_session') {
-    localStorage.removeItem('ig_session_id');
-    sessionId = null;
-    appScreen.style.display = 'none';
-    loginScreen.style.display = 'flex';
-    loginError.textContent = 'دوباره وارد شو';
+  if (data && data.detail && (data.detail.code === 'not_logged_in')) {
+    errorBox.textContent = data.detail.message || 'اکانت سرور لاگین نیست، بعداً امتحان کن';
     return true;
   }
   return false;
 }
+
+// شروع خودکار بدون صفحه‌ی ورود
+showApp();
 
 // ---------- فید خانه ----------
 async function loadHome() {
@@ -141,7 +83,7 @@ async function loadHome() {
   errorBox.textContent = '';
 
   try {
-    const res = await fetch(`/api/timeline?session_id=${sessionId}`);
+    const res = await fetch('/api/timeline');
     const data = await res.json();
     if (!res.ok) {
       if (handleAuthError(data)) return;
@@ -166,7 +108,7 @@ async function loadExplore() {
   errorBox.textContent = '';
 
   try {
-    const res = await fetch(`/api/explore?session_id=${sessionId}`);
+    const res = await fetch('/api/explore');
     const data = await res.json();
     if (!res.ok) {
       if (handleAuthError(data)) return;
@@ -199,7 +141,7 @@ async function loadReels() {
   reelsContainer.innerHTML = '<p class="reels-loading">در حال بارگذاری...</p>';
 
   try {
-    const res = await fetch(`/api/reels?session_id=${sessionId}`);
+    const res = await fetch('/api/reels');
     const data = await res.json();
     if (!res.ok) {
       if (handleAuthError(data)) return;
@@ -276,7 +218,7 @@ async function loadProfile(username) {
   feed.innerHTML = '<p class="loading">در حال بارگذاری...</p>';
 
   try {
-    const res = await fetch(`/api/profile/${encodeURIComponent(username)}?session_id=${sessionId}`);
+    const res = await fetch(`/api/profile/${encodeURIComponent(username)}`);
     const data = await res.json();
 
     if (!res.ok) {
@@ -421,9 +363,5 @@ searchInput.addEventListener('keydown', (e) => {
   }
 });
 
-// ---------- شروع ----------
-if (sessionId && myUsername) {
-  showApp();
-} else {
-  loginScreen.style.display = 'flex';
-  }
+
+        
