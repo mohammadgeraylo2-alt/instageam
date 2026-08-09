@@ -105,6 +105,14 @@ async function doLogin() {
 loginBtn.onclick = doLogin;
 loginPassword.addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
 
+const signupLink = document.getElementById('signup-link');
+signupLink.onclick = (e) => {
+  if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.openLink) {
+    e.preventDefault();
+    window.Telegram.WebApp.openLink(signupLink.href);
+  }
+};
+
 // ---------- نمایش اپ اصلی ----------
 function showApp() {
   loginScreen.style.display = 'none';
@@ -418,4 +426,4 @@ if (sessionId && myUsername) {
   showApp();
 } else {
   loginScreen.style.display = 'flex';
-}
+  }
