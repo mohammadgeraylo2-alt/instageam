@@ -1,3 +1,4 @@
+import os
 import uuid
 from typing import Optional
 
@@ -20,6 +21,35 @@ app = FastAPI()
 # session_id -> instagrapi Client (توی حافظه؛ با ری‌استارت سرور همه لاگین‌ها پاک می‌شن)
 sessions: dict[str, Client] = {}
 
+# پراکسی اختیاری (HTTP/SOCKS5) برای لاگین از IP غیر-دیتاسنتری.
+# چون IP سرورهای ابری مثل Railway اغلب توسط اینستاگرام مشکوک/بلاک‌لیست می‌شه و باعث
+# می‌شه حتی پسورد درست هم با خطای BadPassword رد بشه، تنظیم این متغیر محیطی
+# (مثلاً یه پراکسی مسکونی/موبایل) لازمه تا لاگین واقعاً کار کنه.
+# فرمت: PROXY_URL=http://user:pass@host:port  یا  socks5://user:pass@host:port
+PROXY_URL = os.environ.get("PROXY_URL")
+
+
+def make_client() -> Client:
+    cl = Client()
+    # یه device profile ثابت و واقعی‌تر (به‌جای پیش‌فرض کتابخونه) که اینستاگرام
+    # کمتر به‌عنوان دستگاه ناشناس/اسکریپت بهش شک کنه.
+    cl.set_device({
+        "app_version": "300.0.0.29.110",
+        "android_version": 33,
+        "android_release": "13.0",
+        "dpi": "420dpi",
+        "resolution": "1080x2340",
+        "manufacturer": "samsung",
+        "device": "SM-A536E",
+        "model": "a53x",
+        "cpu": "exynos1280",
+        "version_code": "480794569",
+    })
+    cl.set_user_agent()
+    if PROXY_URL:
+        cl.set_proxy(PROXY_URL)
+    return cl
+
 
 class LoginRequest(BaseModel):
     username: str
@@ -29,7 +59,7 @@ class LoginRequest(BaseModel):
 
 @app.post("/api/login")
 def login(req: LoginRequest):
-    cl = Client()
+    cl = make_client()
     try:
         if req.verification_code:
             cl.login(req.username, req.password, verification_code=req.verification_code)
@@ -48,10 +78,19 @@ def login(req: LoginRequest):
                 "message": "اینستاگرام درخواست تایید هویت کرده. اول از اپ رسمی/ایمیل تاییدش کن، بعد دوباره امتحان کن",
             },
         )
-    except BadPassword:
+    except BadPassword as e:
+        # پیام واقعی اینستاگرام رو نگه می‌داریم؛ اگه سرور IP بلاک‌لیست‌شده داشته باشه
+        # (خیلی رایج روی Railway/سرورهای ابری) دقیقاً همینجا مشخص می‌شه.
         raise HTTPException(
             status_code=401,
-            detail={"code": "bad_password", "message": "یوزرنیم یا پسورد اشتباهه"},
+            detail={
+                "code": "bad_password",
+                "message": (
+                    "اینستاگرام پسورد رو رد کرد. اگه مطمئنی درسته، احتمالاً IP سرور "
+                    "بلاک‌لیست شده — باید PROXY_URL (پراکسی مسکونی/موبایل) تنظیم بشه. "
+                    f"پیام اصلی: {e}"
+                ),
+            },
         )
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=400, detail={"code": "unknown", "message": str(e)})
@@ -262,3 +301,4 @@ def video_proxy(url: str, request: Request):
 
 # ---------- فایل‌های فرانت‌اند ----------
 app.mount("/", StaticFiles(directory="public", html=True), name="static")
+            
