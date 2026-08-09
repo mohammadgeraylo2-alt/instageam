@@ -1,38 +1,35 @@
 import os
-import uuid
-from typing import Optional
+import threading
 
 import requests
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 
 from instagrapi import Client
-from instagrapi.exceptions import (
-    TwoFactorRequired,
-    ChallengeRequired,
-    BadPassword,
-    LoginRequired,
-)
+from instagrapi.exceptions import LoginRequired
 
 app = FastAPI()
 
-# session_id -> instagrapi Client (توی حافظه؛ با ری‌استارت سرور همه لاگین‌ها پاک می‌شن)
-sessions: dict[str, Client] = {}
+# ---------- لاگین با یک اکانت مشترک (نه لاگین کاربر نهایی) ----------
+# یوزرنیم/پسورد رو توی Railway به‌عنوان متغیر محیطی تنظیم کن، نه توی کد:
+#   IG_USERNAME=...
+#   IG_PASSWORD=...
+IG_USERNAME = os.environ.get("IG_USERNAME")
+IG_PASSWORD = os.environ.get("IG_PASSWORD")
 
 # پراکسی اختیاری (HTTP/SOCKS5) برای لاگین از IP غیر-دیتاسنتری.
-# چون IP سرورهای ابری مثل Railway اغلب توسط اینستاگرام مشکوک/بلاک‌لیست می‌شه و باعث
-# می‌شه حتی پسورد درست هم با خطای BadPassword رد بشه، تنظیم این متغیر محیطی
-# (مثلاً یه پراکسی مسکونی/موبایل) لازمه تا لاگین واقعاً کار کنه.
+# چون IP سرورهای ابری مثل Railway اغلب توسط اینستاگرام بلاک‌لیست می‌شه.
 # فرمت: PROXY_URL=http://user:pass@host:port  یا  socks5://user:pass@host:port
 PROXY_URL = os.environ.get("PROXY_URL")
+
+shared_client: Client | None = None
+login_lock = threading.Lock()
+login_error: str | None = None
 
 
 def make_client() -> Client:
     cl = Client()
-    # یه device profile ثابت و واقعی‌تر (به‌جای پیش‌فرض کتابخونه) که اینستاگرام
-    # کمتر به‌عنوان دستگاه ناشناس/اسکریپت بهش شک کنه.
     cl.set_device({
         "app_version": "300.0.0.29.110",
         "android_version": 33,
@@ -51,63 +48,59 @@ def make_client() -> Client:
     return cl
 
 
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-    verification_code: Optional[str] = None
-
-
-@app.post("/api/login")
-def login(req: LoginRequest):
+def do_shared_login() -> None:
+    """یک بار با اکانت مشترک لاگین می‌کنه و نتیجه رو توی shared_client نگه می‌داره."""
+    global shared_client, login_error
+    if not IG_USERNAME or not IG_PASSWORD:
+        login_error = "متغیرهای IG_USERNAME / IG_PASSWORD روی سرور تنظیم نشدن"
+        return
     cl = make_client()
     try:
-        if req.verification_code:
-            cl.login(req.username, req.password, verification_code=req.verification_code)
-        else:
-            cl.login(req.username, req.password)
-    except TwoFactorRequired:
-        raise HTTPException(
-            status_code=400,
-            detail={"code": "2fa_required", "message": "کد تایید دومرحله‌ای لازمه"},
-        )
-    except ChallengeRequired:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "code": "challenge_required",
-                "message": "اینستاگرام درخواست تایید هویت کرده. اول از اپ رسمی/ایمیل تاییدش کن، بعد دوباره امتحان کن",
-            },
-        )
-    except BadPassword as e:
-        # پیام واقعی اینستاگرام رو نگه می‌داریم؛ اگه سرور IP بلاک‌لیست‌شده داشته باشه
-        # (خیلی رایج روی Railway/سرورهای ابری) دقیقاً همینجا مشخص می‌شه.
-        raise HTTPException(
-            status_code=401,
-            detail={
-                "code": "bad_password",
-                "message": (
-                    "اینستاگرام پسورد رو رد کرد. اگه مطمئنی درسته، احتمالاً IP سرور "
-                    "بلاک‌لیست شده — باید PROXY_URL (پراکسی مسکونی/موبایل) تنظیم بشه. "
-                    f"پیام اصلی: {e}"
-                ),
-            },
-        )
+        cl.login(IG_USERNAME, IG_PASSWORD)
+        shared_client = cl
+        login_error = None
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail={"code": "unknown", "message": str(e)})
-
-    session_id = str(uuid.uuid4())
-    sessions[session_id] = cl
-    return {"session_id": session_id, "username": cl.username}
+        shared_client = None
+        login_error = str(e)
 
 
-def get_client(session_id: str) -> Client:
-    cl = sessions.get(session_id)
-    if not cl:
-        raise HTTPException(
-            status_code=401,
-            detail={"code": "no_session", "message": "لاگین منقضی شده، دوباره وارد شو"},
-        )
-    return cl
+@app.on_event("startup")
+def on_startup():
+    do_shared_login()
+
+
+def get_client() -> Client:
+    global shared_client
+    with login_lock:
+        if shared_client is None:
+            # اگه لاگین اولیه شکست خورده بود، دوباره امتحان کن
+            do_shared_login()
+        if shared_client is None:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "not_logged_in",
+                    "message": f"اکانت مشترک لاگین نیست: {login_error or 'نامشخص'}",
+                },
+            )
+        return shared_client
+
+
+def relogin_and_retry(fn):
+    """اگه سشن مشترک منقضی شده بود، یه بار دوباره لاگین می‌کنه و تابع رو تکرار می‌کنه."""
+    global shared_client
+    try:
+        return fn(get_client())
+    except LoginRequired:
+        with login_lock:
+            shared_client = None
+            do_shared_login()
+        if shared_client is None:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "not_logged_in", "message": login_error or "لاگین دوباره ناموفق بود"},
+            )
+        return fn(shared_client)
 
 
 def serialize_media_dict(media: dict) -> dict:
@@ -158,14 +151,23 @@ def serialize_media_obj(m) -> dict:
     }
 
 
+# ---------- وضعیت لاگین اکانت مشترک ----------
+@app.get("/api/status")
+def status():
+    username = shared_client.username if shared_client else None
+    return {"logged_in": shared_client is not None, "username": username, "error": login_error}
+
+
 # ---------- فید خانه ----------
 @app.get("/api/timeline")
-def timeline(session_id: str = Query(...)):
-    cl = get_client(session_id)
+def timeline():
+    def _call(cl):
+        return cl.private_request("feed/timeline/", params={"reason": "pull_to_refresh"})
+
     try:
-        feed = cl.private_request("feed/timeline/", params={"reason": "pull_to_refresh"})
-    except LoginRequired:
-        raise HTTPException(status_code=401, detail={"code": "no_session", "message": "دوباره وارد شو"})
+        feed = relogin_and_retry(_call)
+    except HTTPException:
+        raise
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -179,12 +181,14 @@ def timeline(session_id: str = Query(...)):
 
 # ---------- اکسپلور ----------
 @app.get("/api/explore")
-def explore(session_id: str = Query(...)):
-    cl = get_client(session_id)
+def explore():
+    def _call(cl):
+        return cl.private_request("discover/explore/")
+
     try:
-        data = cl.private_request("discover/explore/")
-    except LoginRequired:
-        raise HTTPException(status_code=401, detail={"code": "no_session", "message": "دوباره وارد شو"})
+        data = relogin_and_retry(_call)
+    except HTTPException:
+        raise
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -201,13 +205,16 @@ def explore(session_id: str = Query(...)):
 
 # ---------- پروفایل ----------
 @app.get("/api/profile/{username}")
-def profile(username: str, session_id: str = Query(...)):
-    cl = get_client(session_id)
-    try:
+def profile(username: str):
+    def _call(cl):
         user = cl.user_info_by_username(username)
         medias = cl.user_medias(user.pk, amount=18)
-    except LoginRequired:
-        raise HTTPException(status_code=401, detail={"code": "no_session", "message": "دوباره وارد شو"})
+        return user, medias
+
+    try:
+        user, medias = relogin_and_retry(_call)
+    except HTTPException:
+        raise
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -226,11 +233,10 @@ def profile(username: str, session_id: str = Query(...)):
 
 # ---------- ریلز ----------
 @app.get("/api/reels")
-def reels(session_id: str = Query(...)):
-    cl = get_client(session_id)
+def reels():
+    cl = get_client()
     items = []
     try:
-        # این endpoint رسمی نیست و ممکنه اینستاگرام فرمتش رو عوض کنه
         data = cl.private_request(
             "clips/home/",
             data={"container_module": "clips_viewer_clips_tab", "feed_type": "clips"},
@@ -242,7 +248,6 @@ def reels(session_id: str = Query(...)):
     except Exception:  # noqa: BLE001
         pass
 
-    # اگه endpoint بالا کار نکرد، از اکسپلور فقط ویدیوها رو فیلتر کن
     if not items:
         try:
             data2 = cl.private_request("discover/explore/")
@@ -301,4 +306,4 @@ def video_proxy(url: str, request: Request):
 
 # ---------- فایل‌های فرانت‌اند ----------
 app.mount("/", StaticFiles(directory="public", html=True), name="static")
-            
+    
