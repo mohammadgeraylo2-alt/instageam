@@ -1,25 +1,37 @@
-# دیپلوی Xray (VLESS + WebSocket) روی Railway
+# Xray روی Railway + ساخت خودکار کانفیگ از طریق ربات تلگرام
 
-## مراحل دیپلوی
+## فایل‌ها (فقط ۴ تا)
+- `Dockerfile`
+- `app.py` — همه‌کاره: ساخت کانفیگ زنده، API مدیریتی، چک حجم/انقضا
+- `entrypoint.sh` — استارت‌کننده
+- `README.md`
 
-1. این پوشه رو به یه ریپوی گیت‌هاب push کن (یا مستقیم با Railway CLI دیپلوی کن).
-2. توی [railway.app](https://railway.app) یه پروژه‌ی جدید بساز و ریپو رو وصل کن (New Project → Deploy from GitHub repo).
-3. Railway به‌صورت خودکار Dockerfile رو تشخیص می‌ده و بیلد می‌کنه.
-4. توی تب **Settings → Networking**، روی **Generate Domain** بزن تا یه دامنه‌ی عمومی مثل `your-app.up.railway.app` بگیری.
-   - مطمئن شو Target Port روی `8080` تنظیم شده باشه.
-5. صبر کن دیپلوی تموم بشه (لاگ‌ها رو توی تب Deployments چک کن).
+## مراحل راه‌اندازی روی Railway
 
-## کانفیگ کلاینت (لینک VLESS)
+### ۱. یه Volume بساز (ضروری)
+Settings → Volumes → mount path: `/data`
+بدون این، با هر push جدید همه‌ی کانفیگ‌های ساخته‌شده پاک می‌شن.
 
-بعد از گرفتن دامنه، `your-app.up.railway.app` رو توی لینک زیر جایگزین کن:
+### ۲. Environment Variables
+- `MANAGE_SECRET` — یه رشته‌ی رندوم طولانی (رمز مشترک بین ربات و این سرور)
+- `PUBLIC_DOMAIN` — دامنه‌ای که Railway بهت داده (مثلاً `instageam-production.up.railway.app`)
 
+### ۳. دو تا دامنه‌ی عمومی
+- دامنه‌ی موجود → target port `8080` (این پورت VPN هست)
+- یه دامنه‌ی جدید بساز → target port `8081` (این پورت API مدیریتیه که ربات باهاش صحبت می‌کنه)
+
+### ۴. push کن
+
+## مراحل سمت ربات تلگرام
+فایل `admin_bot-4-4-1-6.py` رو جایگزین قبلی کن و این Environment Variables رو اضافه کن:
+- `XRAY_MANAGE_URL` = آدرس دامنه‌ی دوم + `/create`
+- `XRAY_MANAGE_SECRET` = همون مقدار `MANAGE_SECRET`
+
+## استفاده
 ```
-vless://a9c3279d-483f-479a-8dc6-a59240d24169@your-app.up.railway.app:443?type=ws&security=tls&path=%2Fa9c3279d-483f-479a-8dc6-a59240d24169-vless&host=your-app.up.railway.app#RailwayRelay
+/getconfig
+> چند گیگ؟ 30
+> چند روز؟ 10
 ```
-
-این لینک رو توی v2rayN، v2rayNG، NekoBox یا هر کلاینت VLESS دیگه import کن.
-
-## نکات امنیتی
-
-- UUID و path توی این فایل نمونه هستن — قبل از استفاده‌ی واقعی، UUID جدید با `xray uuid` بساز و path رو هم عوض کن تا لینک قابل حدس نباشه.
-- اگه چند نفر می‌خوان از این سرور استفاده کنن، توی `clients` آرایه، هرکدوم رو با UUID جدا اضافه کن.
+لینک `vless://...` رو برمی‌
+گردونه.
