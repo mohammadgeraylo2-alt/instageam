@@ -190,12 +190,21 @@ async def import_session(req: ImportSessionRequest):
 
 @app.post("/api/auth/logout")
 async def logout():
+    global client
     await ensure_connected()
     if await client.is_user_authorized():
         await client.log_out()
+    else:
+        await client.disconnect()
+
     p = Path(SESSION_STRING_FILE)
     if p.exists():
         p.unlink()
+
+    # بعد از log_out، خودِ آبجکت client دیگه تا ابد قابل‌استفاده نیست
+    # (این محدودیت خودِ Telethon هست) پس باید یه کلاینت کاملاً تازه بسازیم.
+    client = TelegramClient(StringSession(""), API_ID, API_HASH)
+    await client.connect()
     return {"authorized": False}
 
 
