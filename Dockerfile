@@ -1,7 +1,13 @@
 FROM teddysun/xray:latest
 
-COPY config.json /etc/xray/config.json
+RUN apk add --no-cache python3
+
+WORKDIR /app
+COPY app.py /app/app.py
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 EXPOSE 8080
+EXPOSE 8081
 
-CMD ["xray", "run", "-config", "/etc/xray/config.json"]
+ENTRYPOINT ["/app/entrypoint.sh"]
