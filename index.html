@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>تلگرام</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- صفحه‌ی لاگین -->
+<div id="login-screen" class="screen">
+  <div class="login-box">
+    <div class="tg-logo">✈</div>
+    <h1>ورود به تلگرام</h1>
+
+    <div id="step-phone" class="login-step">
+      <p class="hint">شماره‌ی خودت رو با کد کشور وارد کن</p>
+      <input id="phone-input" type="tel" placeholder="+98 912 000 0000" autocomplete="tel">
+      <button id="send-code-btn">ارسال کد</button>
+      <p class="switch-link"><a id="show-import-link" href="#">به‌جاش با session string وارد شو</a></p>
+    </div>
+
+    <div id="step-code" class="login-step hidden">
+      <p class="hint">کدی که تلگرام برات فرستاد رو وارد کن</p>
+      <input id="code-input" type="text" placeholder="12345" autocomplete="one-time-code">
+      <button id="verify-code-btn">تایید</button>
+    </div>
+
+    <div id="step-password" class="login-step hidden">
+      <p class="hint">رمز دومرحله‌ای حسابت رو وارد کن</p>
+      <input id="password-input" type="password" placeholder="رمز عبور">
+      <button id="verify-password-btn">ورود</button>
+    </div>
+
+    <div id="step-import" class="login-step hidden">
+      <p class="hint">session string رو اینجا پیست کن (از local_login.py یا ربات ادمین خودت)</p>
+      <textarea id="import-input" rows="4" placeholder="1BJWap1wBu6Gjxqun..."></textarea>
+      <button id="import-session-btn">ورود با Session</button>
+      <p class="switch-link"><a id="show-phone-link" href="#">برگشت به ورود با شماره</a></p>
+    </div>
+
+    <p id="login-error" class="error hidden"></p>
+  </div>
+</div>
+
+<!-- صفحه‌ی اصلی چت -->
+<div id="app-screen" class="screen hidden">
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <span>چت‌ها</span>
+      <button id="logout-btn" title="خروج">⏻</button>
+    </div>
+    <div id="dialogs-list" class="dialogs-list"></div>
+  </div>
+
+  <div class="chat-area">
+    <div id="chat-empty" class="chat-empty">یک گفتگو رو انتخاب کن</div>
+    <div id="chat-view" class="chat-view hidden">
+      <div class="chat-header">
+        <img id="chat-header-avatar" class="avatar" src="">
+        <span id="chat-header-name"></span>
+      </div>
+      <div id="messages-list" class="messages-list"></div>
+      <div id="composer-banner" class="composer-banner hidden">
+        <div class="composer-banner-text">
+          <span id="composer-banner-label"></span>
+          <div id="composer-banner-preview"></div>
+        </div>
+        <button id="composer-banner-cancel">✕</button>
+      </div>
+      <div class="composer">
+        <input id="message-input" type="text" placeholder="پیام...">
+        <button id="send-btn">ارسال</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- منوی اکشن روی پیام (ریپلای/فوروارد/ادیت/دیلیت) -->
+<div id="msg-action-menu" class="msg-action-menu hidden">
+  <button data-action="reply">↩ ریپلای</button>
+  <button data-action="forward">↪ فوروارد</button>
+  <button data-action="edit" class="own-only">✎ ادیت</button>
+  <button data-action="delete" class="own-only">🗑 حذف</button>
+</div>
+
+<!-- مودال انتخاب مقصد فوروارد -->
+<div id="forward-modal" class="modal hidden">
+  <div class="modal-box">
+    <h2>فوروارد به...</h2>
+    <div id="forward-dialogs-list" class="forward-dialogs-list"></div>
+    <button id="forward-cancel-btn">انصراف</button>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
