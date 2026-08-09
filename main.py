@@ -23,25 +23,28 @@ from telethon.tl.types import User, Chat, Channel
 SESSION_STRING_FILE = os.environ.get("TG_SESSION_STRING_FILE", "tg_session_string.txt")
 
 
+# مقادیر رسمیِ عمومیِ اپ دسکتاپ تلگرام (Telegram Desktop) — این مقادیر تو
+# سورس‌کد و مستندات پروژه‌ی open-source opentele هم منتشر شدن و مخصوص یه
+# پروژه یا شخص نیستن. استفاده از این‌ها به‌جای opentele2 باعث می‌شه دیگه
+# نیازی به نصب PyQt5 (که رو Railway معمولاً fail می‌شه) یا دسترسی به
+# my.telegram.org نباشه.
+_OFFICIAL_TDESKTOP_API_ID = 2040
+_OFFICIAL_TDESKTOP_API_HASH = "b18441a1ff607e10a989891a5462e627"
+
+
 def get_api_credentials():
     """
-    اول از env می‌خونه (TG_API_ID / TG_API_HASH که از my.telegram.org گرفتی).
-    اگه ست نشده بودن، با opentele2 یه API رسمی اپ اندروید تلگرام تولید می‌کنه
-    تا نیازی به my.telegram.org نباشه (همون روشی که تو ربات ادمین استفاده شده).
+    اول از env می‌خونه (TG_API_ID / TG_API_HASH که از my.telegram.org گرفتی، ترجیحاً
+    از این استفاده کن). اگه ست نشده بودن، از مقادیر رسمیِ عمومیِ TDesktop استفاده
+    می‌کنه که نیازی به my.telegram.org یا opentele2 نداره.
     """
     api_id = int(os.environ.get("TG_API_ID", "0") or "0")
     api_hash = os.environ.get("TG_API_HASH", "")
     if api_id and api_hash:
         return api_id, api_hash
 
-    try:
-        from opentele2.api import API
-        generated = API.TelegramAndroid.Generate(unique_id="personal-site")
-        print("INFO: TG_API_ID/TG_API_HASH تنظیم نشده بودن؛ از opentele2 برای تولید API استفاده شد.")
-        return generated.api_id, generated.api_hash
-    except Exception as e:  # noqa: BLE001
-        print(f"WARNING: نه TG_API_ID/TG_API_HASH ست شده، نه opentele2 در دسترسه ({e}). لاگین کار نمی‌کنه.")
-        return api_id or 1, api_hash or "x"
+    print("INFO: TG_API_ID/TG_API_HASH ست نشده بودن؛ از مقادیر رسمی TDesktop استفاده شد.")
+    return _OFFICIAL_TDESKTOP_API_ID, _OFFICIAL_TDESKTOP_API_HASH
 
 
 API_ID, API_HASH = get_api_credentials()
@@ -379,3 +382,4 @@ async def media(chat_id: int, message_id: int):
 
 # ---------- فایل‌های فرانت‌اند ----------
 app.mount("/", StaticFiles(directory="public", html=True), name="static")
+        
