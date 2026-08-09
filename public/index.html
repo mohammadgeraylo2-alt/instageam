@@ -58,8 +58,14 @@
     <div id="chat-empty" class="chat-empty">یک گفتگو رو انتخاب کن</div>
     <div id="chat-view" class="chat-view hidden">
       <div class="chat-header">
-        <img id="chat-header-avatar" class="avatar" src="">
-        <span id="chat-header-name"></span>
+        <button id="chat-back-btn" class="chat-back-btn" aria-label="برگشت">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <div id="chat-header-avatar-wrap" class="avatar-wrap"></div>
+        <div class="chat-header-info">
+          <span id="chat-header-name"></span>
+          <span class="chat-header-sub">آنلاین</span>
+        </div>
       </div>
       <div id="messages-list" class="messages-list"></div>
       <div id="composer-banner" class="composer-banner hidden">
@@ -71,7 +77,9 @@
       </div>
       <div class="composer">
         <input id="message-input" type="text" placeholder="پیام...">
-        <button id="send-btn">ارسال</button>
+        <button id="send-btn" aria-label="ارسال">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M3 11.5L20.5 3l-8.2 17.5-2.6-7.2L3 11.5z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" fill="currentColor"/></svg>
+        </button>
       </div>
     </div>
   </div>
@@ -95,5 +103,6 @@
 </div>
 
 <script src="app.js"></script>
-</body>
+</bod
+  y>
 </html>
