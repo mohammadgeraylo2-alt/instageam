@@ -1,3 +1,4 @@
+
 import os
 import io
 from pathlib import Path
@@ -391,4 +392,4 @@ async def media(chat_id: int, message_id: int):
 
 # ---------- فایل‌های فرانت‌اند ----------
 app.mount("/", StaticFiles(directory="public", html=True), name="static")
-        
+    
