@@ -4,7 +4,7 @@ set -e
 QUOTA_CHECK_INTERVAL=${QUOTA_CHECK_INTERVAL:-60}
 mkdir -p "${XRAY_STATE_DIR:-/data}"
 
-python3 /app/app.py render
+python3 -u /app/app.py render
 
 start_xray() {
   xray run -config /etc/xray/config.json &
@@ -15,7 +15,7 @@ start_xray() {
 start_xray
 sleep 5
 
-python3 /app/app.py manage &
+python3 -u /app/app.py manage &
 
 # ری‌استارت سریع بعد از ساخت کاربر جدید یا حذف کاربر منقضی
 (
@@ -39,5 +39,5 @@ while true; do
     start_xray
     sleep 5
   fi
-  python3 /app/app.py quota-check
+  python3 -u /app/app.py quota-check
 done
