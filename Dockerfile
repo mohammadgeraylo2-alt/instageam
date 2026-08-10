@@ -1,4 +1,4 @@
-FROM teddysun/xray:latest
+FROM teddysun/xray:26.2.6
 
 RUN apk add --no-cache python3
 
