@@ -19,9 +19,28 @@ USAGE_PATH = os.path.join(STATE_DIR, "usage_totals.json")
 LIVE_CONFIG_PATH = "/etc/xray/config.json"
 FLAG_PATH = "/tmp/config_changed"
 MANAGE_SECRET = os.environ.get("MANAGE_SECRET", "")
-PUBLIC_DOMAIN = os.environ.get("PUBLIC_DOMAIN", "")
-WS_PATH = os.environ.get("WS_PATH", "/xray-ws")
 GB = 1024 ** 3
+
+# ---- Reality settings (replace the old PUBLIC_DOMAIN / WS_PATH pair) -----
+# داخلی: پورتی که خود Xray روش گوش می‌ده (باید همون پورتی باشه که در
+# Railway -> Settings -> Networking -> TCP Proxy به عنوان "Target Port" دادی)
+REALITY_LISTEN_PORT = int(os.environ.get("REALITY_LISTEN_PORT", "443"))
+
+# دست‌دهی TLS واقعی به جای این دامنه انجام می‌شه (باید یه سایت واقعی و
+# پشتیبان TLS1.3 + HTTP/2 باشه، مثلا یه سایت مایکروسافت/سرویس ابری معروف)
+REALITY_DEST = os.environ.get("REALITY_DEST", "www.microsoft.com:443")
+REALITY_SERVER_NAMES = [
+    s.strip() for s in os.environ.get("REALITY_SERVER_NAMES", "www.microsoft.com").split(",") if s.strip()
+]
+REALITY_PRIVATE_KEY = os.environ.get("REALITY_PRIVATE_KEY", "")
+REALITY_PUBLIC_KEY = os.environ.get("REALITY_PUBLIC_KEY", "")
+_raw_short_ids = os.environ.get("REALITY_SHORT_IDS", "").strip()
+REALITY_SHORT_IDS = [s.strip() for s in _raw_short_ids.split(",")] if _raw_short_ids else [""]
+
+# بیرونی: هاست:پورتی که ریلوی از طریق TCP Proxy بهت داده
+# (مثلا shuttle.proxy.rlwy.net) و پورت جداگونه‌ش
+PUBLIC_HOST = os.environ.get("PUBLIC_HOST", "")
+PUBLIC_PORT = os.environ.get("PUBLIC_PORT", "443")
 
 CONFIG_TEMPLATE = {
     "log": {"loglevel": "warning"},
@@ -41,10 +60,21 @@ CONFIG_TEMPLATE = {
         },
         {
             "listen": "0.0.0.0",
-            "port": 8080,
+            "port": REALITY_LISTEN_PORT,
             "protocol": "vless",
             "settings": {"clients": [], "decryption": "none"},
-            "streamSettings": {"network": "ws", "wsSettings": {"path": WS_PATH}},
+            "streamSettings": {
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                    "show": False,
+                    "dest": REALITY_DEST,
+                    "xver": 0,
+                    "serverNames": REALITY_SERVER_NAMES,
+                    "privateKey": REALITY_PRIVATE_KEY,
+                    "shortIds": REALITY_SHORT_IDS,
+                },
+            },
         },
     ],
     "outbounds": [
@@ -53,6 +83,18 @@ CONFIG_TEMPLATE = {
     ],
     "routing": {"rules": [{"type": "field", "inboundTag": ["api"], "outboundTag": "api"}]},
 }
+
+
+def _require_reality_env():
+    missing = [
+        name for name, val in [
+            ("REALITY_PRIVATE_KEY", REALITY_PRIVATE_KEY),
+            ("REALITY_PUBLIC_KEY", REALITY_PUBLIC_KEY),
+            ("PUBLIC_HOST", PUBLIC_HOST),
+        ] if not val
+    ]
+    if missing:
+        print(f"[config] هشدار: این متغیرها ست نشدن: {', '.join(missing)}")
 
 
 def load_json(path, default):
@@ -75,7 +117,13 @@ def render_config():
     for inbound in config["inbounds"]:
         if inbound.get("protocol") == "vless":
             inbound["settings"]["clients"] = [
-                {"id": c["uuid"], "level": 0, "email": c["email"]} for c in clients
+                {
+                    "id": c["uuid"],
+                    "level": 0,
+                    "email": c["email"],
+                    "flow": "xtls-rprx-vision",
+                }
+                for c in clients
             ]
     save_json(LIVE_CONFIG_PATH, config)
     print(f"[render] wrote {LIVE_CONFIG_PATH} with {len(clients)} client(s)")
@@ -87,13 +135,15 @@ def flag_restart():
 
 
 def build_vless_link(client_uuid, gb, days):
-    if not PUBLIC_DOMAIN:
+    if not (PUBLIC_HOST and REALITY_PUBLIC_KEY):
         return None
-    path_enc = WS_PATH.replace("/", "%2F")
+    sni = REALITY_SERVER_NAMES[0] if REALITY_SERVER_NAMES else REALITY_DEST.split(":")[0]
+    sid = REALITY_SHORT_IDS[0]
     return (
-        f"vless://{client_uuid}@{PUBLIC_DOMAIN}:443"
-        f"?type=ws&security=tls&path={path_enc}&host={PUBLIC_DOMAIN}"
-        f"&encryption=none#Relay-{gb}GB-{days}d"
+        f"vless://{client_uuid}@{PUBLIC_HOST}:{PUBLIC_PORT}"
+        f"?type=tcp&security=reality&flow=xtls-rprx-vision"
+        f"&pbk={REALITY_PUBLIC_KEY}&fp=chrome&sni={sni}&sid={sid}&spx=%2F"
+        f"#Relay-{gb}GB-{days}d"
     )
 
 
@@ -318,6 +368,7 @@ def quota_check():
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     os.makedirs(STATE_DIR, exist_ok=True)
+    _require_reality_env()
     if cmd == "render":
         render_config()
     elif cmd == "manage":
