@@ -99,6 +99,67 @@ def build_vless_link(client_uuid, gb, days):
 
 
 # --------------------------------------------------------------------------
+def get_stats():
+    try:
+        out = subprocess.check_output(
+            ["xray", "api", "statsquery", "--server=127.0.0.1:10085"],
+            stderr=subprocess.DEVNULL,
+        )
+        return json.loads(out)
+    except Exception as e:
+        print(f"[usage] error querying stats API: {e}")
+        return None
+
+
+def get_raw_usage():
+    """آمار آنی هر کاربر از Xray API - جمع نشده با تاریخچه"""
+    stats = get_stats()
+    raw_usage = {}
+    if stats:
+        for stat in stats.get("stat", []):
+            parts = stat["name"].split(">>>")
+            if len(parts) == 4 and parts[0] == "user":
+                raw_usage[parts[1]] = raw_usage.get(parts[1], 0) + int(stat.get("value", 0))
+    return raw_usage
+
+
+def build_usage_report():
+    """
+    گزارش کامل مصرف هر کاربر: مصرف‌شده، باقی‌مانده، تاریخ انقضا
+    این تابع چیزی رو حذف یا تغییر نمی‌ده، فقط گزارش می‌ده (برخلاف quota_check)
+    """
+    clients = load_json(CLIENTS_PATH, [])
+    if not clients:
+        return []
+
+    raw_usage = get_raw_usage()
+    usage_state = load_json(USAGE_PATH, {})
+    today = datetime.now(timezone.utc).date().isoformat()
+
+    report = []
+    for client in clients:
+        email = client["email"]
+        raw = raw_usage.get(email, 0)
+        state = usage_state.get(email, {"total": 0, "last_raw": 0})
+        # همون منطق quota_check ولی بدون ذخیره کردن (فقط تخمین لحظه‌ای)
+        delta = raw - state["last_raw"] if raw >= state["last_raw"] else raw
+        used_bytes = state["total"] + delta
+        total_bytes = client["gb"] * GB
+        remaining_bytes = max(total_bytes - used_bytes, 0)
+
+        report.append({
+            "email": email,
+            "uuid": client["uuid"],
+            "gb": client["gb"],
+            "days_expires": client["expires"],
+            "expired": today > client["expires"],
+            "used_gb": round(used_bytes / GB, 3),
+            "remaining_gb": round(remaining_bytes / GB, 3),
+        })
+    return report
+
+
+# --------------------------------------------------------------------------
 class Handler(BaseHTTPRequestHandler):
     def _send(self, status, payload):
         body = json.dumps(payload).encode()
@@ -108,13 +169,21 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def do_POST(self):
-        if self.path != "/create":
-            self._send(404, {"error": "not found"})
-            return
+    def _read_payload(self):
         length = int(self.headers.get("Content-Length", 0))
+        return json.loads(self.rfile.read(length) or b"{}")
+
+    def do_POST(self):
+        if self.path == "/create":
+            self._handle_create()
+        elif self.path == "/usage":
+            self._handle_usage()
+        else:
+            self._send(404, {"error": "not found"})
+
+    def _handle_create(self):
         try:
-            payload = json.loads(self.rfile.read(length) or b"{}")
+            payload = self._read_payload()
         except json.JSONDecodeError:
             self._send(400, {"error": "invalid json"})
             return
@@ -148,6 +217,19 @@ class Handler(BaseHTTPRequestHandler):
             "expires": expires, "vless_link": build_vless_link(client_uuid, gb, days),
         })
 
+    def _handle_usage(self):
+        try:
+            payload = self._read_payload()
+        except json.JSONDecodeError:
+            self._send(400, {"error": "invalid json"})
+            return
+        if not MANAGE_SECRET or payload.get("secret") != MANAGE_SECRET:
+            self._send(401, {"error": "unauthorized"})
+            return
+
+        report = build_usage_report()
+        self._send(200, {"clients": report})
+
     def log_message(self, fmt, *args):
         print("[manage]", fmt % args)
 
@@ -160,31 +242,12 @@ def run_manage_api():
 
 
 # --------------------------------------------------------------------------
-def get_stats():
-    try:
-        out = subprocess.check_output(
-            ["xray", "api", "statsquery", "--server=127.0.0.1:10085"],
-            stderr=subprocess.DEVNULL,
-        )
-        return json.loads(out)
-    except Exception as e:
-        print(f"[quota-check] error querying stats API: {e}")
-        return None
-
-
 def quota_check():
     clients = load_json(CLIENTS_PATH, [])
     if not clients:
         return
 
-    stats = get_stats()
-    raw_usage = {}
-    if stats:
-        for stat in stats.get("stat", []):
-            parts = stat["name"].split(">>>")
-            if len(parts) == 4 and parts[0] == "user":
-                raw_usage[parts[1]] = raw_usage.get(parts[1], 0) + int(stat.get("value", 0))
-
+    raw_usage = get_raw_usage()
     usage_state = load_json(USAGE_PATH, {})
     today = datetime.now(timezone.utc).date().isoformat()
 
