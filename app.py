@@ -5,6 +5,7 @@
     python3 app.py manage        -> اجرای API مدیریتی (پورت 8081)
     python3 app.py quota-check   -> یه بار چک حجم/انقضا و حذف کاربرای منقضی‌شده
 """
+import html
 import json
 import os
 import subprocess
@@ -12,6 +13,7 @@ import sys
 import uuid as uuidlib
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse, parse_qs
 
 STATE_DIR = os.environ.get("XRAY_STATE_DIR", "/data")
 CLIENTS_PATH = os.path.join(STATE_DIR, "clients.json")
@@ -41,6 +43,11 @@ REALITY_SHORT_IDS = [s.strip() for s in _raw_short_ids.split(",")] if _raw_short
 # (مثلا shuttle.proxy.rlwy.net) و پورت جداگونه‌ش
 PUBLIC_HOST = os.environ.get("PUBLIC_HOST", "")
 PUBLIC_PORT = os.environ.get("PUBLIC_PORT", "443")
+
+# دامنه‌ی HTTP عمومی سرویس (همون دامنه‌ای که ریلوی زیر Networking -> Public
+# Networking برای پورت 8081 ساخته، مثلا instageam-production-xxxx.up.railway.app)
+# این برای صفحه‌ی عمومی چک حجم/باقی‌مونده استفاده می‌شه، نه برای خودِ Xray.
+STATUS_DOMAIN = os.environ.get("PUBLIC_DOMAIN", "").strip()
 
 CONFIG_TEMPLATE = {
     "log": {"loglevel": "warning"},
@@ -147,6 +154,13 @@ def build_vless_link(client_uuid, gb, days):
     )
 
 
+def build_status_link(client_uuid):
+    """لینک صفحه‌ی عمومیِ چک حجم/انقضا برای این کاربر (بدون نیاز به رمز)."""
+    if not STATUS_DOMAIN:
+        return None
+    return f"https://{STATUS_DOMAIN}/check?uuid={client_uuid}"
+
+
 # --------------------------------------------------------------------------
 def get_stats():
     try:
@@ -202,6 +216,34 @@ def build_usage_report():
     return report
 
 
+def build_single_status(client_uuid):
+    """گزارش وضعیت یه کاربر خاص (برای صفحه‌ی عمومی چک حجم)."""
+    clients = load_json(CLIENTS_PATH, [])
+    client = next((c for c in clients if c["uuid"] == client_uuid), None)
+    if not client:
+        return None
+
+    raw_usage = get_raw_usage()
+    usage_state = load_json(USAGE_PATH, {})
+    today = datetime.now(timezone.utc).date().isoformat()
+
+    email = client["email"]
+    raw = raw_usage.get(email, 0)
+    state = usage_state.get(email, {"total": 0, "last_raw": 0})
+    delta = raw - state["last_raw"] if raw >= state["last_raw"] else raw
+    used_bytes = state["total"] + delta
+    total_bytes = client["gb"] * GB
+    remaining_bytes = max(total_bytes - used_bytes, 0)
+
+    return {
+        "gb": client["gb"],
+        "expires": client["expires"],
+        "expired": today > client["expires"],
+        "used_gb": round(used_bytes / GB, 3),
+        "remaining_gb": round(remaining_bytes / GB, 3),
+    }
+
+
 def revoke_client(uuid_prefix):
     """کاربری که uuid‌ش با uuid_prefix شروع می‌شه رو حذف می‌کنه. برمی‌گردونه: (موفق؟, ایمیل حذف‌شده یا پیام خطا)"""
     clients = load_json(CLIENTS_PATH, [])
@@ -247,6 +289,60 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send(404, {"error": "not found"})
 
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        if parsed.path == "/check":
+            self._handle_check(parse_qs(parsed.query))
+        else:
+            self._send(404, {"error": "not found"})
+
+    def _send_html(self, status, body):
+        encoded = body.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def _handle_check(self, query):
+        client_uuid = (query.get("uuid") or [""])[0].strip()
+        page = (
+            "<!doctype html><html lang='fa' dir='rtl'>"
+            "<meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>وضعیت اکانت</title>"
+            "<style>body{font-family:sans-serif;background:#111;color:#eee;"
+            "display:flex;align-items:center;justify-content:center;height:100vh;margin:0}"
+            ".card{background:#1c1c1c;padding:24px 32px;border-radius:12px;max-width:360px;text-align:center}"
+            "h2{margin-top:0}.bar{background:#333;border-radius:8px;height:14px;overflow:hidden;margin:12px 0}"
+            ".fill{background:#7c5cff;height:100%}.err{color:#ff6b6b}</style><div class='card'>"
+        )
+        if not client_uuid:
+            page += "<h2 class='err'>UUID داده نشده</h2></div></html>"
+            self._send_html(400, page)
+            return
+
+        status = build_single_status(client_uuid)
+        if not status:
+            page += "<h2 class='err'>کاربری با این UUID پیدا نشد (شاید حذف یا منقضی شده)</h2></div></html>"
+            self._send_html(404, page)
+            return
+
+        pct_used = 0
+        if status["gb"] > 0:
+            pct_used = min(100, round((status["used_gb"] / status["gb"]) * 100))
+        state_label = "منقضی‌شده" if status["expired"] else "فعال"
+        state_class = "err" if status["expired"] else ""
+        page += (
+            f"<h2>وضعیت اکانت</h2>"
+            f"<p class='{state_class}'>{html.escape(state_label)}</p>"
+            f"<div class='bar'><div class='fill' style='width:{pct_used}%'></div></div>"
+            f"<p>{status['used_gb']} / {status['gb']} گیگ مصرف‌شده</p>"
+            f"<p>{status['remaining_gb']} گیگ باقی‌مونده</p>"
+            f"<p>انقضا: {html.escape(status['expires'])}</p>"
+            f"</div></html>"
+        )
+        self._send_html(200, page)
+
     def _handle_create(self):
         try:
             payload = self._read_payload()
@@ -281,6 +377,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, {
             "uuid": client_uuid, "email": email, "gb": gb, "days": days,
             "expires": expires, "vless_link": build_vless_link(client_uuid, gb, days),
+            "status_link": build_status_link(client_uuid),
         })
 
     def _handle_usage(self):
