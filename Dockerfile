@@ -1,10 +1,10 @@
-FROM python:3.11-slim
+FROM teddysun/xray:latest
+
+RUN apk add --no-cache python3
 
 WORKDIR /app
+COPY app.py /app/app.py
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY app.py .
-
-CMD ["python", "app.py"]
+ENTRYPOINT ["/entrypoint.sh"]
