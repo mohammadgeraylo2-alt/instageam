@@ -2,7 +2,7 @@
 """
 یه فایل به‌جای سه تا سرور همه‌کاره Xray روی Railway:
     python3 app.py render        -> ساخت config.json زنده از قالب clients.json
-    python3 app.py manage        -> اجرای API مدیریتی برای ساخت کاربر جدید (پورت 8081)
+    python3 app.py manage        -> اجرای API مدیریتی (پورت 8081)
     python3 app.py quota-check   -> یه بار چک حجم/انقضا و حذف کاربرای منقضی‌شده
 """
 import json
@@ -23,7 +23,6 @@ PUBLIC_DOMAIN = os.environ.get("PUBLIC_DOMAIN", "")
 WS_PATH = os.environ.get("WS_PATH", "/xray-ws")
 GB = 1024 ** 3
 
-# قالب پایه‌ی Xray - clients همیشه خالی، همیشه موقع render پر میشه
 CONFIG_TEMPLATE = {
     "log": {"loglevel": "warning"},
     "api": {"tag": "api", "services": ["HandlerService", "LoggerService", "StatsService"]},
@@ -72,7 +71,7 @@ def save_json(path, data):
 # --------------------------------------------------------------------------
 def render_config():
     clients = load_json(CLIENTS_PATH, [])
-    config = json.loads(json.dumps(CONFIG_TEMPLATE))  # deep copy
+    config = json.loads(json.dumps(CONFIG_TEMPLATE))
     for inbound in config["inbounds"]:
         if inbound.get("protocol") == "vless":
             inbound["settings"]["clients"] = [
@@ -112,7 +111,6 @@ def get_stats():
 
 
 def get_raw_usage():
-    """آمار آنی هر کاربر از Xray API - جمع نشده با تاریخچه"""
     stats = get_stats()
     raw_usage = {}
     if stats:
@@ -124,10 +122,6 @@ def get_raw_usage():
 
 
 def build_usage_report():
-    """
-    گزارش کامل مصرف هر کاربر: مصرف‌شده، باقی‌مانده، تاریخ انقضا
-    این تابع چیزی رو حذف یا تغییر نمی‌ده، فقط گزارش می‌ده (برخلاف quota_check)
-    """
     clients = load_json(CLIENTS_PATH, [])
     if not clients:
         return []
@@ -141,7 +135,6 @@ def build_usage_report():
         email = client["email"]
         raw = raw_usage.get(email, 0)
         state = usage_state.get(email, {"total": 0, "last_raw": 0})
-        # همون منطق quota_check ولی بدون ذخیره کردن (فقط تخمین لحظه‌ای)
         delta = raw - state["last_raw"] if raw >= state["last_raw"] else raw
         used_bytes = state["total"] + delta
         total_bytes = client["gb"] * GB
@@ -159,6 +152,24 @@ def build_usage_report():
     return report
 
 
+def revoke_client(uuid_prefix):
+    """کاربری که uuid‌ش با uuid_prefix شروع می‌شه رو حذف می‌کنه. برمی‌گردونه: (موفق؟, ایمیل حذف‌شده یا پیام خطا)"""
+    clients = load_json(CLIENTS_PATH, [])
+    matches = [c for c in clients if c["uuid"].startswith(uuid_prefix)]
+
+    if not matches:
+        return False, "کاربری با این UUID پیدا نشد"
+    if len(matches) > 1:
+        return False, "چند کاربر با این پیشوند مطابقت دارن، UUID کامل‌تری بده"
+
+    target = matches[0]
+    remaining = [c for c in clients if c["uuid"] != target["uuid"]]
+    save_json(CLIENTS_PATH, remaining)
+    render_config()
+    flag_restart()
+    return True, target["email"]
+
+
 # --------------------------------------------------------------------------
 class Handler(BaseHTTPRequestHandler):
     def _send(self, status, payload):
@@ -173,11 +184,16 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         return json.loads(self.rfile.read(length) or b"{}")
 
+    def _check_secret(self, payload):
+        return MANAGE_SECRET and payload.get("secret") == MANAGE_SECRET
+
     def do_POST(self):
         if self.path == "/create":
             self._handle_create()
         elif self.path == "/usage":
             self._handle_usage()
+        elif self.path == "/revoke":
+            self._handle_revoke()
         else:
             self._send(404, {"error": "not found"})
 
@@ -187,7 +203,7 @@ class Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             self._send(400, {"error": "invalid json"})
             return
-        if not MANAGE_SECRET or payload.get("secret") != MANAGE_SECRET:
+        if not self._check_secret(payload):
             self._send(401, {"error": "unauthorized"})
             return
         try:
@@ -223,12 +239,33 @@ class Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             self._send(400, {"error": "invalid json"})
             return
-        if not MANAGE_SECRET or payload.get("secret") != MANAGE_SECRET:
+        if not self._check_secret(payload):
             self._send(401, {"error": "unauthorized"})
             return
 
         report = build_usage_report()
         self._send(200, {"clients": report})
+
+    def _handle_revoke(self):
+        try:
+            payload = self._read_payload()
+        except json.JSONDecodeError:
+            self._send(400, {"error": "invalid json"})
+            return
+        if not self._check_secret(payload):
+            self._send(401, {"error": "unauthorized"})
+            return
+
+        uuid_prefix = payload.get("uuid", "")
+        if not uuid_prefix:
+            self._send(400, {"error": "uuid is required"})
+            return
+
+        ok, result = revoke_client(uuid_prefix)
+        if ok:
+            self._send(200, {"revoked": True, "email": result})
+        else:
+            self._send(404, {"error": result})
 
     def log_message(self, fmt, *args):
         print("[manage]", fmt % args)
